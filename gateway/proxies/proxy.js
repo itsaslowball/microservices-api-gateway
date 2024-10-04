@@ -1,26 +1,51 @@
-// proxies/proxy.js
 const { createProxyMiddleware } = require("http-proxy-middleware");
+const { Buffer } = require("buffer");
+const { client, setValue, getValue } = require("../utils/redisClient");
 
+// Middleware for proxying requests
 const proxyMiddleware = (serviceUrl) => {
-  return createProxyMiddleware({
-    target: serviceUrl,
-    changeOrigin: true,
-    onError(err, req, res) {
-      console.error(`Proxy error: ${err.message}`);
-      res.status(502).send("Bad Gateway");
-    },
-    onProxyRes(proxyRes, req, res) {
-      // Remove sensitive headers from the response
-      delete proxyRes.headers["x-powered-by"];
-      delete proxyRes.headers["server"];
-      proxyRes.headers["x-gateway-response"] = "Processed by API Gateway"; // Add custom header
-    },
-    onProxyReq(proxyReq, req, res) {
-      // Remove sensitive headers from the request
-      proxyReq.removeHeader("x-powered-by");
-      proxyReq.removeHeader("server");
-    },
-  });
+ 
+  return async (req, res, next) => {
+    try {
+      const cachedData = await getValue(req.originalUrl);
+      if (cachedData) {
+        res.send(cachedData);
+      } else {
+        // If not found in Redis, proceed with proxying the request to the target server
+        createProxyMiddleware({
+          target: serviceUrl,
+          changeOrigin: true,
+          selfHandleResponse: true,
+          on: {
+            proxyRes: async (proxyRes, req, res) => {
+              let body = ""; 
+
+              proxyRes.on("data", (chunk) => {
+                body += chunk.toString("utf8"); 
+              });
+
+              proxyRes.on("end", () => {
+                setValue(req.originalUrl, body, 60);
+                console.log(`Full Response Body for ${req.originalUrl}:`, body);
+
+                res.send(body);
+              });
+            },
+            // Handle any proxy errors
+            error: (err, req, res) => {
+              console.error("Error in proxy:", err);
+              res
+                .status(500)
+                .send("Something went wrong with the proxy server.");
+            },
+          },
+        })(req, res, next);
+      }
+    } catch (error) {
+      console.error("Error handling proxy middleware:", error);
+      res.status(500).send("Internal Server Error");
+    }
+  };
 };
 
 module.exports = proxyMiddleware;

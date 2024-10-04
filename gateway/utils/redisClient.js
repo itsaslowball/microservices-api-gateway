@@ -1,26 +1,42 @@
-// utils/redisClient.js
-const redis = require("redis");
-const { promisify } = require("util");
+const Redis = require("ioredis");
 
-const redisClient = redis.createClient({
-  host: process.env.REDIS_HOST || "localhost",
-  port: process.env.REDIS_PORT || 6379,
+const client = new Redis();
+
+const setValue = async (key, value, expiryInSeconds) => {
+  try {
+    await client.set(key, value, "EX", expiryInSeconds);
+    console.log(`Data set in Redis for ${key}`);
+  } catch (error) {
+    console.error("Error setting data in Redis:", error);
+  }
+};
+
+const getValue = async (key) => {
+  try {
+    const data = await client.get(key);
+    if (data) {
+      console.log(`Data found in Redis cache for ${key}`);
+      return data;
+    }
+  } catch (error) {
+    console.error("Error retrieving data from Redis:", error);
+  }
+};
+
+client.on("connect", () => {
+  console.log("Redis client connected");
 });
 
-redisClient.on("error", (err) => {
-  console.error("Redis error:", err);
+client.on("ready", () => {
+  console.log("Redis client ready to use");
 });
 
-redisClient.on("connect", () => {
-  console.log("Connected to Redis successfully.");
+client.on("error", (error) => {
+  console.error("Redis client error:", error);
 });
 
-redisClient.on("ready", () => {
-  console.log("Redis client is ready to use.");
+client.on("end", () => {
+  console.log("Redis client disconnected");
 });
 
-// Promisify Redis methods for async/await usage
-const getAsync = promisify(redisClient.get).bind(redisClient);
-const setAsync = promisify(redisClient.set).bind(redisClient);
-
-module.exports = { getAsync, setAsync, redisClient };
+module.exports = { client, setValue, getValue };
